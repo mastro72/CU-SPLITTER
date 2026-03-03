@@ -1,0 +1,5 @@
+{
+  "name": "CU 2026 Splitter",
+  "description": "Dividi e rinomina automaticamente i file PDF delle Certificazioni Uniche 2026 in blocchi da 9 pagine.",
+  "requestFramePermissions": []
+}
