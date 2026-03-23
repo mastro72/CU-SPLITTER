@@ -93,67 +93,90 @@ export default function App() {
     setError(null);
 
     try {
-      addLog("Caricamento documento per l'estrazione del testo...");
+      addLog("Caricamento documento per l'analisi delle pagine...");
       const arrayBufferForPdfJs = await file.arrayBuffer();
       const pdfJsDoc = await pdfjsLib.getDocument({ data: arrayBufferForPdfJs }).promise;
       const totalPages = pdfJsDoc.numPages;
 
       addLog(`Documento caricato. Pagine totali: ${totalPages}`);
 
-      addLog('Caricamento documento per la divisione...');
+      addLog('Analisi della struttura del documento in corso...');
       const arrayBufferForPdfLib = await file.arrayBuffer();
       const pdfLibDoc = await PDFDocument.load(arrayBufferForPdfLib);
 
       const zip = new JSZip();
-      const chunkSize = 9;
-      const totalChunks = Math.ceil(totalPages / chunkSize);
-
       let mainEmployerName = 'Datore_Sconosciuto';
 
-      for (let i = 0; i < totalChunks; i++) {
-        const startPage = i * chunkSize;
-        const endPage = Math.min(startPage + chunkSize, totalPages) - 1;
+      const cuChunks: { start: number; end: number; employer: string; employee: string }[] = [];
 
-        addLog(`Elaborazione blocco ${i + 1}/${totalChunks} (Pagine ${startPage + 1}-${endPage + 1})...`);
+      // Phase 1: Analyze pages to find CU boundaries
+      for (let i = 1; i <= totalPages; i++) {
+        const page = await pdfJsDoc.getPage(i);
+        const textContent = await page.getTextContent();
+        const textStr = textContent.items.map((item: any) => item.str).join(' ');
+        const normalizedText = textStr.replace(/\s+/g, ' ').toUpperCase();
 
-        let employer = 'Datore_Sconosciuto';
-        let employee = `Dipendente_Sconosciuto_${i + 1}`;
+        // Identify the first page of a CU
+        const isStartPage =
+          normalizedText.includes('DATI RELATIVI AL DATORE') ||
+          normalizedText.includes('DATI RELATIVI AL DIPENDENTE') ||
+          (normalizedText.includes('CERTIFICAZIONE') && normalizedText.includes('CUI ALL'));
 
-        try {
-          const pageNum = startPage + 1;
-          const page = await pdfJsDoc.getPage(pageNum);
-          const textContent = await page.getTextContent();
+        if (isStartPage) {
+          // Close the previous chunk
+          if (cuChunks.length > 0) {
+            cuChunks[cuChunks.length - 1].end = i - 1;
+          }
+
+          // Extract names for the new chunk
           const extracted = extractNamesFromText(textContent.items);
+          let employer = extracted.employer || 'Datore_Sconosciuto';
+          let employee = extracted.employee || `Dipendente_Sconosciuto_${cuChunks.length + 1}`;
 
-          if (extracted.employer) {
-            employer = extracted.employer;
-            // Save the first found employer name to use for the zip file
-            if (i === 0 || mainEmployerName === 'Datore_Sconosciuto') {
+          if (cuChunks.length === 0 || mainEmployerName === 'Datore_Sconosciuto') {
+            if (extracted.employer) {
               mainEmployerName = extracted.employer;
             }
           }
-          if (extracted.employee) employee = extracted.employee;
-        } catch (err) {
-          console.warn("Errore durante l'estrazione del testo per la pagina", startPage + 1, err);
-          addLog(`Avviso: Impossibile estrarre il testo per il blocco ${i + 1}. Uso nomi generici.`);
+
+          cuChunks.push({
+            start: i,
+            end: totalPages, // Default to end of document, will be updated if another start page is found
+            employer,
+            employee,
+          });
+          
+          addLog(`Trovata CU a pagina ${i}: ${employer} - ${employee}`);
         }
 
-        const safeEmployer = sanitizeFilename(employer);
-        const safeEmployee = sanitizeFilename(employee);
+        setProgress(Math.round((i / totalPages) * 40)); // 0-40% for analysis
+      }
+
+      if (cuChunks.length === 0) {
+        throw new Error("Non è stata trovata nessuna Certificazione Unica valida nel documento. Assicurati che sia il modello corretto.");
+      }
+
+      addLog(`Analisi completata. Trovate ${cuChunks.length} Certificazioni Uniche. Inizio divisione...`);
+
+      // Phase 2: Split and generate PDFs
+      for (let i = 0; i < cuChunks.length; i++) {
+        const chunk = cuChunks[i];
+        addLog(`Generazione blocco ${i + 1}/${cuChunks.length} (Pagine ${chunk.start}-${chunk.end})...`);
+
+        const safeEmployer = sanitizeFilename(chunk.employer);
+        const safeEmployee = sanitizeFilename(chunk.employee);
 
         const fileName = `CU 2026_${safeEmployer}_${safeEmployee}.pdf`;
-        addLog(`-> Nome generato: ${fileName}`);
 
-        // Create new PDF for the chunk
         const newPdf = await PDFDocument.create();
-        const pageIndices = Array.from({ length: endPage - startPage + 1 }, (_, k) => startPage + k);
+        const pageIndices = Array.from({ length: chunk.end - chunk.start + 1 }, (_, k) => chunk.start - 1 + k);
         const copiedPages = await newPdf.copyPages(pdfLibDoc, pageIndices);
         copiedPages.forEach((p) => newPdf.addPage(p));
 
         const pdfBytes = await newPdf.save();
         zip.file(fileName, pdfBytes);
 
-        setProgress(Math.round(((i + 1) / totalChunks) * 100));
+        setProgress(40 + Math.round(((i + 1) / cuChunks.length) * 50)); // 40-90% for splitting
       }
 
       addLog('Generazione file ZIP in corso...');
