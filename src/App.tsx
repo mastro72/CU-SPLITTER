@@ -277,7 +277,7 @@ export default function App() {
           <FileArchive className="mx-auto h-12 w-12 text-indigo-600" />
           <h2 className="mt-6 text-3xl font-extrabold text-slate-900">CU 2026 Splitter</h2>
           <p className="mt-2 text-sm text-slate-600">
-            Carica il file PDF unico delle Certificazioni Uniche. Verrà diviso in file da 9 pagine e rinominato automaticamente.
+            Carica il file PDF unico delle Certificazioni Uniche. Verrà diviso automaticamente in singole certificazioni e rinominato in base ai dati estratti.
           </p>
         </div>
 
